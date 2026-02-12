@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>儿童打字加速器 - 键盘大冒险</title>
+    <style>
+        :root { --primary-color: #4CAF50; --bg-color: #f0f4f8; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: var(--bg-color); margin: 0; display: flex; flex-direction: column; align-items: center; overflow: hidden; }
+        
+        /* 菜单界面 */
+        #menu { background: white; padding: 30px; border-radius: 15px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); margin-top: 50px; text-align: center; z-index: 100; max-width: 600px; }
+        .option-group { margin: 15px 0; text-align: left; }
+        select, input, button { padding: 8px; border-radius: 5px; border: 1px solid #ccc; font-size: 16px; margin: 5px; }
+        button { background: var(--primary-color); color: white; cursor: pointer; border: none; padding: 10px 25px; transition: 0.3s; }
+        button:hover { background: #45a049; transform: scale(1.05); }
+
+        /* 游戏画布 */
+        #game-container { position: relative; width: 100vw; height: 100vh; background: #2c3e50; display: none; overflow: hidden; }
+        .word { position: absolute; color: white; background: rgba(255,255,255,0.1); padding: 5px 15px; border-radius: 20px; font-size: 24px; font-weight: bold; border: 2px solid #3498db; transition: transform 0.1s; }
+        
+        /* 击毁动画效果 */
+        .word-hit { animation: hitDestroy 0.6s ease-out forwards; }
+        @keyframes hitDestroy {
+            0% { transform: scale(1) rotate(0deg); opacity: 1; border-color: #3498db; }
+            25% { transform: scale(1.3) rotate(5deg); opacity: 1; border-color: #e74c3c; background: rgba(231, 76, 60, 0.3); }
+            50% { transform: scale(1.5) rotate(-5deg); opacity: 0.8; border-color: #f39c12; }
+            100% { transform: scale(0.1) rotate(10deg); opacity: 0; }
+        }
+        
+        /* 粒子效果 */
+        .particle { position: absolute; width: 4px; height: 4px; background: #f39c12; border-radius: 50%; pointer-events: none; }
+        .particle-explode { animation: particleExplode var(--duration) ease-out forwards; }
+        @keyframes particleExplode {
+            0% { transform: translate(0, 0) scale(1); opacity: 1; }
+            100% { transform: translate(var(--dx), var(--dy)) scale(0); opacity: 0; }
+        }
+        
+        /* 分数弹出动画 */
+        .score-popup { position: absolute; color: #2ecc71; font-size: 20px; font-weight: bold; pointer-events: none; animation: scoreFloat 1s ease-out forwards; }
+        @keyframes scoreFloat {
+            0% { transform: translateY(0) scale(1); opacity: 1; }
+            50% { transform: translateY(-30px) scale(1.2); opacity: 1; }
+            100% { transform: translateY(-60px) scale(0.8); opacity: 0; }
+        }
+        
+        /* UI面板 */
+        #ui-layer { position: absolute; top: 0; width: 100%; padding: 20px; color: white; display: flex; justify-content: space-between; box-sizing: border-box; pointer-events: none; }
+        #fullscreen-btn { pointer-events: auto; background: rgba(255,255,255,0.2); border: 2px solid rgba(255,255,255,0.5); color: white; padding: 8px 15px; border-radius: 8px; cursor: pointer; font-size: 14px; transition: all 0.3s; }
+        #fullscreen-btn:hover { background: rgba(255,255,255,0.3); border-color: white; transform: scale(1.05); }
+        #input-area { position: absolute; bottom: 50px; left: 50%; transform: translateX(-50%); text-align: center; }
+        #player-input { font-size: 24px; padding: 10px; border-radius: 10px; border: 3px solid #3498db; outline: none; width: 300px; text-align: center; }
+    </style>
+</head>
+<body>
+
+<div id="menu">
+    <h2>🚀 键盘打字大冒险</h2>
+    
+    <div class="option-group">
+        <label>选择难度：</label>
+        <select id="difficulty">
+            <option value="row1">基本字母 1 (中间行: ASDF...)</option>
+            <option value="row2">基本字母 2 (上行: QWER...)</option>
+            <option value="row3">基本字母 3 (下行: ZXCV...)</option>
+            <option value="all_rows">全部字母 (A-Z)</option>
+            <option value="pinyin_mix">常用拼音 (声母/韵母组合)</option>
+            <option value="pinyin_full">所有拼音组合</option>
+            <option value="custom">自定义题库 (见下方文本框)</option>
+        </select>
+    </div>
+
+    <div id="custom-box" class="option-group" style="display:none;">
+        <label>自定义词库 (用空格或逗号隔开):</label><br>
+        <textarea id="custom-words" style="width:100%; height:60px;">apple banana cherry</textarea>
+    </div>
+
+    <div class="option-group">
+        <label>下落速度 (1-10):</label>
+        <input type="number" id="speed" value="2" min="1" max="10">
+        <label>时间 (秒):</label>
+        <input type="number" id="game-time" value="60" min="10">
+    </div>
+
+    <button onclick="startGame()">开始游戏</button>
+</div>
+
+<div id="game-container">
+    <div id="ui-layer">
+        <div>得分: <span id="score">0</span></div>
+        <div>
+            <button id="fullscreen-btn" onclick="toggleFullscreen()">🔲 全屏</button>
+            <span style="margin-left: 15px;">剩余时间: <span id="timer">60</span>s</span>
+        </div>
+    </div>
+    
+    <div id="input-area">
+        <input type="text" id="player-input" placeholder="在此输入文字..." autofocus>
+    </div>
+</div>
+
+<script>
+    // 题库定义
+    const wordBanks = {
+        row1: "asdfghjkl;".split(""),
+        row2: "qwertyuiop[]".split(""),
+        row3: "zxcvbnm,./".split(""),
+        all_rows: "asdfghjkl;qwertyuiop[]zxcvbnm,./".split(""),
+        pinyin_mix: ["shang", "zhong", "guo", "hua", "xue", "tian", "ming", "bai", "dui", "qing"],
+        pinyin_full: ["a","ai","an","ang","ao","ba","bai","ban","bang","bao","bei","ben","beng","bi","bian","biao","bie","bin","bing","bo","bu","ca","cai","can","cang","cao","ce","cen","ceng","cha","chai","chan","chang","chao","che","chen","cheng","chi","chong","chou","chu","chua","chuai","chuan","chuang","chui","chun","chuo","ci","cong","cou","cu","cuan","cui","cun","cuo","da","dai","dan","dang","dao","de","dei","den","deng","di","dia","dian","diao","die","ding","diu","dong","dou","du","duan","dui","dun","duo","e","en","er","fa","fan","fang","fei","fen","feng","fo","fou","fu","ga","gai","gan","gang","gao","ge","gei","gen","geng","gong","gou","gu","gua","guai","guan","guang","gui","gun","guo","ha","hai","han","hang","hao","he","hei","hen","heng","hong","hou","hu","hua","huai","huan","huang","hui","hun","huo","ji","jia","jian","jiang","jiao","jie","jin","jing","jiong","jiu","ju","juan","jue","jun","ka","kai","kan","kang","kao","ke","ken","keng","kong","kou","ku","kua","kuai","kuan","kuang","kui","kun","kuo","la","lai","lan","lang","lao","le","lei","leng","li","lia","lian","liang","liao","lie","lin","ling","liu","long","lou","lu","luan","lü","lue","lun","luo","ma","mai","man","mang","mao","me","mei","men","meng","mi","mian","miao","mie","min","ming","miu","mo","mou","mu","na","nai","nan","nang","nao","ne","nei","nen","neng","ni","nian","niang","niao","nie","nin","ning","niu","nong","nou","nu","nuan","nü","nue","nuo","o","ou","pa","pai","pan","pang","pao","pei","pen","peng","pi","pian","piao","pie","pin","ping","po","pou","pu","qi","qia","qian","qiang","qiao","qie","qin","qing","qiong","qiu","qu","quan","que","qun","ran","rang","rao","re","ren","reng","ri","rong","rou","ru","ruan","rui","run","ruo","sa","sai","san","sang","sao","se","sen","seng","sha","shai","shan","shang","shao","she","shei","shen","sheng","shi","shou","shu","shua","shuai","shuan","shuang","shui","shun","shuo","si","song","sou","su","suan","sui","sun","suo","ta","tai","tan","tang","tao","te","teng","ti","tian","tiao","tie","ting","tong","tou","tu","tuan","tui","tun","tuo","wa","wai","wan","wang","wei","wen","weng","wo","wu","xi","xia","xian","xiang","xiao","xie","xin","xing","xiong","xiu","xu","xuan","xue","xun","ya","yan","yang","yao","ye","yi","yin","ying","yo","yong","you","yu","yuan","yue","yun","za","zai","zan","zang","zao","ze","zei","zen","zeng","zha","zhai","zhan","zhang","zhao","zhe","zhei","zhen","zheng","zhi","zhong","zhou","zhu","zhua","zhuai","zhuan","zhuang","zhui","zhun","zhuo","zi","zong","zou","zu","zuan","zui","zun","zuo"]
+    };
+
+    let score = 0;
+    let timeLeft = 60;
+    let gameInterval, spawnInterval, timerInterval;
+    let activeWords = [];
+    let speed = 5;
+
+    const difficultySelect = document.getElementById('difficulty');
+    difficultySelect.addEventListener('change', () => {
+        document.getElementById('custom-box').style.display = difficultySelect.value === 'custom' ? 'block' : 'none';
+    });
+
+    function startGame() {
+        // 初始化设置
+        score = 0;
+        timeLeft = parseInt(document.getElementById('game-time').value);
+        speed = parseInt(document.getElementById('speed').value);
+        document.getElementById('score').innerText = score;
+        document.getElementById('timer').innerText = timeLeft;
+        
+        // 获取题目集
+        let currentBank = [];
+        const diff = difficultySelect.value;
+        if (diff === 'custom') {
+            currentBank = document.getElementById('custom-words').value.split(/[\s,，]+/).filter(w => w.length > 0);
+        } else {
+            currentBank = wordBanks[diff];
+        }
+
+        // 切换界面
+        document.getElementById('menu').style.display = 'none';
+        document.getElementById('game-container').style.display = 'block';
+        const inputField = document.getElementById('player-input');
+        inputField.value = '';
+        inputField.focus();
+
+        // 游戏逻辑循环
+        spawnInterval = setInterval(() => spawnWord(currentBank), 2000 - (speed * 100));
+		
+        // 1. 专门处理物理下落的循环 (每 50 毫秒移动一次，保证丝滑)
+		gameInterval = setInterval(() => {
+			updatePhysics();
+		}, 50);
+
+		// 2. 专门处理倒计时的循环 (每 1000 毫秒减 1，保证时间准确)
+		timerInterval = setInterval(() => {
+			timeLeft--;
+			document.getElementById('timer').innerText = timeLeft;
+			if (timeLeft <= 0) endGame();
+		}, 1000);
+
+        // 输入监听
+        inputField.oninput = () => {
+            const val = inputField.value.trim().toLowerCase();
+            const targetIndex = activeWords.findIndex(w => w.text.toLowerCase() === val);
+            if (targetIndex !== -1) {
+                // 击毁逻辑增强
+                const wordObj = activeWords[targetIndex];
+                destroyWord(wordObj, targetIndex);
+                inputField.value = '';
+            }
+        };
+    }
+
+    function destroyWord(wordObj, index) {
+        const { el, text } = wordObj;
+        
+        // 创建粒子爆炸效果
+        createParticleExplosion(el);
+        
+        // 创建分数弹出动画
+        createScorePopup(el, '+10');
+        
+        // 添加击毁动画
+        el.classList.add('word-hit');
+        
+        // 延迟删除元素
+        setTimeout(() => {
+            if (el.parentNode) {
+                el.remove();
+            }
+        }, 600);
+        
+        // 立即从数组中移除，避免重复检测
+        activeWords.splice(index, 1);
+        
+        // 更新分数
+        score += 10;
+        document.getElementById('score').innerText = score;
+        
+        // 输入框闪烁反馈
+        const inputField = document.getElementById('player-input');
+        inputField.style.borderColor = '#2ecc71';
+        inputField.style.boxShadow = '0 0 10px rgba(46, 204, 113, 0.5)';
+        setTimeout(() => {
+            inputField.style.borderColor = '#3498db';
+            inputField.style.boxShadow = 'none';
+        }, 200);
+    }
+    
+    function createParticleExplosion(wordElement) {
+        const rect = wordElement.getBoundingClientRect();
+        const centerX = rect.left + rect.width / 2;
+        const centerY = rect.top + rect.height / 2;
+        
+        // 创建8-12个粒子
+        const particleCount = Math.floor(Math.random() * 5) + 8;
+        
+        for (let i = 0; i < particleCount; i++) {
+            const particle = document.createElement('div');
+            particle.className = 'particle';
+            
+            // 随机颜色
+            const colors = ['#f39c12', '#e74c3c', '#2ecc71', '#3498db', '#9b59b6'];
+            particle.style.background = colors[Math.floor(Math.random() * colors.length)];
+            
+            // 随机方向和距离
+            const angle = (Math.PI * 2 * i) / particleCount + (Math.random() - 0.5) * 0.5;
+            const distance = Math.random() * 100 + 50;
+            const dx = Math.cos(angle) * distance;
+            const dy = Math.sin(angle) * distance;
+            const duration = Math.random() * 0.5 + 0.5;
+            
+            particle.style.left = centerX + 'px';
+            particle.style.top = centerY + 'px';
+            particle.style.setProperty('--dx', dx + 'px');
+            particle.style.setProperty('--dy', dy + 'px');
+            particle.style.setProperty('--duration', duration + 's');
+            
+            document.getElementById('game-container').appendChild(particle);
+            
+            // 启动动画
+            requestAnimationFrame(() => {
+                particle.classList.add('particle-explode');
+            });
+            
+            // 清理粒子
+            setTimeout(() => {
+                if (particle.parentNode) {
+                    particle.remove();
+                }
+            }, duration * 1000);
+        }
+    }
+    
+    function createScorePopup(wordElement, scoreText) {
+        const popup = document.createElement('div');
+        popup.className = 'score-popup';
+        popup.innerText = scoreText;
+        
+        const rect = wordElement.getBoundingClientRect();
+        popup.style.left = (rect.left + rect.width / 2 - 10) + 'px';
+        popup.style.top = (rect.top - 10) + 'px';
+        
+        document.getElementById('game-container').appendChild(popup);
+        
+        // 清理弹出动画
+        setTimeout(() => {
+            if (popup.parentNode) {
+                popup.remove();
+            }
+        }, 1000);
+    }
+
+    function spawnWord(bank) {
+        const text = bank[Math.floor(Math.random() * bank.length)];
+        const el = document.createElement('div');
+        el.className = 'word';
+        el.innerText = text;
+        
+        const x = Math.random() * (window.innerWidth - 100) + 50;
+        el.style.left = x + 'px';
+        el.style.top = '-50px';
+        
+        document.getElementById('game-container').appendChild(el);
+        activeWords.push({ el, text, y: -50 });
+    }
+
+    function updatePhysics() {
+        activeWords.forEach((obj, index) => {
+            obj.y += speed * 0.5;
+            obj.el.style.top = obj.y + 'px';
+            
+            // 触底判定
+            if (obj.y > window.innerHeight - 150) {
+                obj.el.style.borderColor = 'red';
+                // 可增加扣分逻辑
+            }
+            if (obj.y > window.innerHeight) {
+                obj.el.remove();
+                activeWords.splice(index, 1);
+            }
+        });
+    }
+
+    function toggleFullscreen() {
+        const btn = document.getElementById('fullscreen-btn');
+        
+        if (!document.fullscreenElement) {
+            // 进入全屏
+            document.documentElement.requestFullscreen().then(() => {
+                btn.innerHTML = '🔳 退出全屏';
+            }).catch(() => {
+                alert('无法进入全屏模式');
+            });
+        } else {
+            // 退出全屏
+            document.exitFullscreen().then(() => {
+                btn.innerHTML = '🔲 全屏';
+            });
+        }
+    }
+
+    // 监听全屏状态变化（用户按ESC键退出全屏时）
+    document.addEventListener('fullscreenchange', () => {
+        const btn = document.getElementById('fullscreen-btn');
+        if (!document.fullscreenElement) {
+            btn.innerHTML = '🔲 全屏';
+        }
+    });
+
+    function endGame() {
+        clearInterval(spawnInterval);
+        clearInterval(gameInterval);
+		clearInterval(timerInterval);
+        alert(`游戏结束！最终得分：${score}`);
+        location.reload(); // 简单重置
+    }
+</script>
+
+</body>
+</html>
