@@ -17,6 +17,7 @@
         .input-box { display: flex; flex-direction: column; gap: 5px; }
         input { padding: 10px; border: 1px solid #cbd5e1; border-radius: 6px; outline: none; transition: border 0.2s; position: relative; }
         input:focus { border-color: var(--primary); }
+        input:disabled { background-color: #f1f5f9; color: #64748b; cursor: not-allowed; }
         input[list]::-webkit-calendar-picker-indicator { cursor: pointer; }
         
         /* datalist样式增强用户体验 */
@@ -55,7 +56,15 @@
         </div>
         <div class="input-box">
             <label>金额 (¥)</label>
-            <input type="number" id="accBalance" step="0.01" placeholder="0.00">
+            <input type="number" id="accBalance" step="0.01" placeholder="0.00" oninput="handleBalanceInput()">
+        </div>
+        <div class="input-box">
+            <label>单价 (¥) <small style="color: #94a3b8;">可选</small></label>
+            <input type="number" id="accPrice" step="0.01" placeholder="0.00" oninput="calculateFromPriceAndQuantity()">
+        </div>
+        <div class="input-box">
+            <label>数量 <small style="color: #94a3b8;">可选</small></label>
+            <input type="number" id="accQuantity" step="0.001" placeholder="1" oninput="calculateFromPriceAndQuantity()">
         </div>
         <div class="input-box">
             <label>分类 (Tag) <small style="color: #94a3b8;">▼ 可选择已有或输入新标签</small></label>
@@ -67,9 +76,10 @@
         <input type="hidden" id="editId">
         <button onclick="saveData()" class="btn-save" id="saveBtn">保存记录</button>
         <button onclick="exportJSON()" class="btn-export">导出备份</button>
-        <small style="color: #64748b; margin-left: 5px;">📁 可选择保存位置</small>
+        <small style="color: #64748b; margin-left: 5px;">📁 可选择保存位置，包含单价数量</small>
         <input type="file" id="fileInput" style="display:none" onchange="importJSON(this)">
         <button onclick="document.getElementById('fileInput').click()" class="btn-import">导入</button>
+        <small style="color: #dc2626; margin-left: 5px;">⚠️ 导入会清空现有数据</small>
     </div>
 
     <div class="main-layout">
@@ -79,7 +89,7 @@
                     <tr>
                         <th>资产位置</th>
                         <th>标签</th>
-                        <th style="text-align: right;">金额</th>
+                        <th style="text-align: right;">金额 <small style="color: #64748b; font-weight: normal;">(支持单价×数量)</small></th>
                         <th style="text-align: center;">操作</th>
                     </tr>
                 </thead>
@@ -104,11 +114,26 @@
         db = e.target.result;
         db.createObjectStore("funds", { keyPath: "id", autoIncrement: true });
     };
-    req.onsuccess = e => { db = e.target.result; render(); };
+    req.onsuccess = e => { 
+        db = e.target.result; 
+        clearAllData(() => { render(); }); // 每次打开显示空数据
+    };
+
+    // 清空所有数据的函数
+    function clearAllData(callback) {
+        const tx = db.transaction(["funds"], "readwrite");
+        const store = tx.objectStore("funds");
+        store.clear();
+        tx.oncomplete = () => {
+            if (callback) callback();
+        };
+    }
 
     function saveData() {
         const name = document.getElementById('accName').value;
         const balance = parseFloat(document.getElementById('accBalance').value);
+        const price = parseFloat(document.getElementById('accPrice').value) || null;
+        const quantity = parseFloat(document.getElementById('accQuantity').value) || null;
         const tag = document.getElementById('accTag').value || "未分类";
         const id = document.getElementById('editId').value;
 
@@ -117,6 +142,13 @@
         const tx = db.transaction(["funds"], "readwrite");
         const store = tx.objectStore("funds");
         const record = { name, balance, tag };
+        
+        // 保存单价和数量信息（如果有的话）
+        if (price && quantity) {
+            record.price = price;
+            record.quantity = quantity;
+        }
+        
         if (id) record.id = parseInt(id);
 
         store.put(record);
@@ -144,7 +176,10 @@
                     <tr>
                         <td><strong>${item.name}</strong></td>
                         <td><span class="tag-pill">${item.tag}</span></td>
-                        <td class="amt">¥ ${item.balance.toLocaleString('zh-CN', {minimumFractionDigits: 2})}</td>
+                        <td class="amt">
+                            ¥ ${item.balance.toLocaleString('zh-CN', {minimumFractionDigits: 2})}
+                            ${item.price && item.quantity ? `<br><small style="color: #64748b;">¥${item.price} × ${item.quantity}</small>` : ''}
+                        </td>
                         <td style="text-align: center;">
                             <button class="btn-edit" onclick="editItem(${item.id})">改</button>
                             <button class="btn-del" onclick="delItem(${item.id})">删</button>
@@ -166,7 +201,12 @@
             const res = e.target.result;
             document.getElementById('accName').value = res.name;
             document.getElementById('accBalance').value = res.balance;
+            document.getElementById('accPrice').value = res.price || '';
+            document.getElementById('accQuantity').value = res.quantity || '';
             document.getElementById('accTag').value = res.tag;
+            
+            // 根据数据状态更新输入框状态
+            updateInputState();
             document.getElementById('editId').value = res.id;
             document.getElementById('saveBtn').innerText = "确认修改";
             document.getElementById('saveBtn').style.background = "#d97706";
@@ -198,18 +238,50 @@
     function updateChart(stats) {
         const ctx = document.getElementById('moneyChart').getContext('2d');
         if (chartInstance) chartInstance.destroy();
+        
+        const values = Object.values(stats);
+        const total = values.reduce((sum, val) => sum + val, 0);
+        
         chartInstance = new Chart(ctx, {
             type: 'doughnut',
             data: {
                 labels: Object.keys(stats),
                 datasets: [{
-                    data: Object.values(stats),
+                    data: values,
                     backgroundColor: ['#0ea5e9', '#f43f5e', '#10b981', '#f59e0b', '#8b5cf6', '#64748b']
                 }]
             },
             options: { 
                 cutout: '60%',
-                plugins: { legend: { position: 'bottom' } } 
+                plugins: { 
+                    legend: { 
+                        position: 'bottom',
+                        labels: {
+                            generateLabels: function(chart) {
+                                const data = chart.data;
+                                return data.labels.map((label, index) => {
+                                    const value = data.datasets[0].data[index];
+                                    const percentage = total > 0 ? ((value / total) * 100).toFixed(1) : '0.0';
+                                    return {
+                                        text: `${label}: ${percentage}%`,
+                                        fillStyle: data.datasets[0].backgroundColor[index],
+                                        hidden: false,
+                                        index: index
+                                    };
+                                });
+                            }
+                        }
+                    },
+                    tooltip: {
+                        callbacks: {
+                            label: function(context) {
+                                const value = context.parsed;
+                                const percentage = total > 0 ? ((value / total) * 100).toFixed(1) : '0.0';
+                                return `${context.label}: ¥${value.toLocaleString('zh-CN', {minimumFractionDigits: 2})} (${percentage}%)`;
+                            }
+                        }
+                    }
+                } 
             }
         });
     }
@@ -260,22 +332,90 @@
     function importJSON(input) {
         const reader = new FileReader();
         reader.onload = e => {
-            const data = JSON.parse(e.target.result);
-            const tx = db.transaction(["funds"], "readwrite");
-            data.forEach(d => { delete d.id; tx.objectStore("funds").add(d); });
-            tx.oncomplete = () => { alert("导入完成"); render(); };
+            try {
+                const data = JSON.parse(e.target.result);
+                
+                // 先清空现有数据，再导入新数据
+                clearAllData(() => {
+                    const tx = db.transaction(["funds"], "readwrite");
+                    
+                    data.forEach(d => { 
+                        delete d.id; // 删除原ID，让数据库自动分配新ID
+                        tx.objectStore("funds").add(d); 
+                    });
+                    
+                    tx.oncomplete = () => { 
+                        alert(`导入完成！已清空原数据，成功导入 ${data.length} 条新记录。`); 
+                        render(); 
+                    };
+                    tx.onerror = () => { 
+                        alert("导入失败，请检查文件格式或数据是否有重复。"); 
+                    };
+                });
+            } catch (err) {
+                alert("文件格式错误，请选择有效的JSON备份文件。");
+                console.error('解析JSON失败:', err);
+            }
         };
         reader.readAsText(input.files[0]);
+    }
+
+    // 处理单价和数量的自动计算
+    function calculateFromPriceAndQuantity() {
+        const price = parseFloat(document.getElementById('accPrice').value);
+        const quantity = parseFloat(document.getElementById('accQuantity').value);
+        const balanceInput = document.getElementById('accBalance');
+        
+        if (!isNaN(price) && !isNaN(quantity)) {
+            balanceInput.value = (price * quantity).toFixed(2);
+            balanceInput.disabled = true;
+            balanceInput.style.backgroundColor = '#f1f5f9';
+        } else {
+            updateInputState();
+        }
+    }
+    
+    // 处理金额直接输入时的逻辑
+    function handleBalanceInput() {
+        const balanceInput = document.getElementById('accBalance');
+        const priceInput = document.getElementById('accPrice');
+        const quantityInput = document.getElementById('accQuantity');
+        
+        if (balanceInput.value) {
+            // 清空单价和数量
+            priceInput.value = '';
+            quantityInput.value = '';
+        }
+    }
+    
+    // 更新输入框状态
+    function updateInputState() {
+        const balanceInput = document.getElementById('accBalance');
+        const price = parseFloat(document.getElementById('accPrice').value);
+        const quantity = parseFloat(document.getElementById('accQuantity').value);
+        
+        if (isNaN(price) && isNaN(quantity)) {
+            balanceInput.disabled = false;
+            balanceInput.style.backgroundColor = '';
+        }
     }
 
     function resetForm() {
         document.getElementById('accName').value = '';
         document.getElementById('accBalance').value = '';
+        document.getElementById('accPrice').value = '';
+        document.getElementById('accQuantity').value = '';
         document.getElementById('accTag').value = '';
+        updateInputState();
         document.getElementById('editId').value = '';
         document.getElementById('saveBtn').innerText = "保存记录";
         document.getElementById('saveBtn').style.background = "#0284c7";
     }
+
+    // 页面初始化
+    document.addEventListener('DOMContentLoaded', function() {
+        updateInputState();
+    });
 
     // 时间显示
     setInterval(() => {
